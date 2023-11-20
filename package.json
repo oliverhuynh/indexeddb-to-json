@@ -1,7 +1,7 @@
 {
   "name": "indexeddb-to-json",
   "description": "Extract IndexedDB to JSON, from any Chrome or Electron database directory",
-  "version": "0.0.6",
+  "version": "0.0.5",
   "main": "src/cli/index.ts",
   "scripts": {
     "lint-fix": "tsc && prettier --write 'src/**/*.js' 'src/**/*.ts' 'src/**/*.html'; eslint src/**/*.js src/**/*.ts .eslintrc.js --fix",
@@ -18,7 +18,9 @@
     "puppeteer": "^2.1.1",
     "recursive-copy": "^2.0.11",
     "ts-node": "^9.0.0",
-    "typescript": "^3.9.7",
+    "typescript": "^3.9.7"
+  },
+  "devDependencies": {
     "@types/commander": "^2.12.2",
     "@types/get-folder-size": "^2.0.0",
     "@types/glob": "^7.1.3",
