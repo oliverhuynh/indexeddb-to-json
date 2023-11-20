@@ -27,6 +27,8 @@ program
     .command('extract <source>')
     .option('--stdout', 'Prints JSON to stdout instead of creating a file')
     .option('--verbose', 'Verbose logging')
+    .option('-d, --db <value>', 'Filter results to DB')
+    .option('-s, --store <value>', 'Filter results to store')
     .action(async (source, options) => {
         await extract(source, options);
     });

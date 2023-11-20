@@ -12,13 +12,16 @@ interface CommandOptions {
     verbose?: boolean;
     stdout?: boolean;
     return?: boolean;
+    db?: string;
+    store?: string;
     includeStores?: boolean;
 }
 
 const HOST_IN_SOURCE_PATH_REGEX = /\/(https?_[a-z0-9\\.-]+)_(\d+)\.indexeddb\.leveldb/;
-const HOST_IN_LOG_REUSING_LINE = / Reusing (MANIFEST|old log) \/.+\/(https?_[a-z0-9\\.-]+)_(\d+)\.indexeddb\.leveldb/;
+const HOST_IN_LOG_REUSING_LINE =
+    / Reusing (MANIFEST|old log) \/.+\/(https?_[a-z0-9\\.-]+)_(\d+)\.indexeddb\.leveldb/;
 const HOST_IS_CHROME_EXTENSION = /\/(chrome-extension_[a-z]+)_0\.indexeddb\.leveldb/;
-const CHROME_INSTALLED_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME_INSTALLED_PATH = '/opt/google/chrome/google-chrome';
 
 // Having Chrome installed is strongly recommended, because it can decode IndexedDB much
 // better than Chromium. Chrome is also required to extract from extensions.
@@ -40,10 +43,10 @@ export default async function extract(
 
     const outputDir = 'indexeddb-to-json-output';
 
-    let host;
-    let port;
-    let isExtension;
-    let pathToExtension;
+    let host: any;
+    let port: any;
+    let isExtension: any;
+    let pathToExtension: any;
 
     let match1;
     if ((match1 = source.match(HOST_IN_SOURCE_PATH_REGEX)) && match1[1]) {
@@ -97,48 +100,72 @@ export default async function extract(
         pathToExtension = chromeExtensionDir;
     }
 
-    const browser = await puppeteer.launch({
-        executablePath: chromeIsInstalled ? CHROME_INSTALLED_PATH : undefined,
-        headless: !isExtension,
-        userDataDir: chromeDir,
-        ignoreHTTPSErrors: true,
-        args: [
-            // See https://peter.sh/experiments/chromium-command-line-switches/
-            // Yeah, this code is for real.
-            '--allow-failed-policy-fetch-for-test',
-            '--allow-insecure-localhost',
-            '--allow-no-sandbox-job',
-            '--allow-running-insecure-content',
-            '--arc-disable-app-sync',
-            '--arc-disable-locale-sync',
-            '--disable-client-side-phishing-detection',
-            '--disable-component-cloud-policy',
-            '--disable-cookie-encryption',
-            '--disable-default-apps',
-            '--disable-explicit-dma-fences',
-            '--disable-extensions-file-access-check',
-            isExtension ? `--disable-extensions-except=${pathToExtension}` : '--disable-extensions',
-            isExtension ? `--load-extension=${pathToExtension}` : '',
-            '--disable-machine-cert-request',
-            '--disable-site-isolation-trials',
-            '--disable-sync',
-            '--disable-web-security',
-            '--enable-sandbox-logging',
-            '--ignore-certificate-errors-spki-list',
-            '--ignore-urlfetcher-cert-requests',
-            '--managed-user-id=""',
-            '--nacl-dangerous-no-sandbox-nonsfi',
-            '--no-sandbox-and-elevated',
-            '--run-without-sandbox-for-testing',
-            '--single-process',
-            '--unlimited-storage',
-            '--unsafely-allow-protected-media-identifier-for-domain',
-            '--unsafely-treat-insecure-origin-as-secure',
-            '--webview-disable-safebrowsing-support',
-            '--v=1',
-            options.verbose ? '--enable-logging' : '',
-        ],
-    });
+    console.log(`executablePath: ${CHROME_INSTALLED_PATH}`);
+    let browser: any;
+    const args = [
+        // See https://peter.sh/experiments/chromium-command-line-switches/
+        // Yeah, this code is for real.
+        '--allow-failed-policy-fetch-for-test',
+        '--allow-insecure-localhost',
+        '--allow-no-sandbox-job',
+        '--allow-running-insecure-content',
+        '--arc-disable-app-sync',
+        '--arc-disable-locale-sync',
+        '--disable-client-side-phishing-detection',
+        '--disable-component-cloud-policy',
+        '--disable-cookie-encryption',
+        '--disable-default-apps',
+        '--disable-explicit-dma-fences',
+        '--disable-extensions-file-access-check',
+    ];
+    const args2 = [
+        // See https://peter.sh/experiments/chromium-command-line-switches/
+        // Yeah, this code is for real.
+        '--allow-failed-policy-fetch-for-test',
+        '--allow-insecure-localhost',
+        '--allow-no-sandbox-job',
+        '--allow-running-insecure-content',
+        '--arc-disable-app-sync',
+        '--arc-disable-locale-sync',
+        '--disable-client-side-phishing-detection',
+        '--disable-component-cloud-policy',
+        '--disable-cookie-encryption',
+        '--disable-default-apps',
+        '--disable-explicit-dma-fences',
+        '--disable-extensions-file-access-check',
+        isExtension ? `--disable-extensions-except=${pathToExtension}` : '--disable-extensions',
+        isExtension ? `--load-extension=${pathToExtension}` : '',
+        '--disable-machine-cert-request',
+        '--disable-site-isolation-trials',
+        '--disable-sync',
+        '--disable-web-security',
+        '--enable-sandbox-logging',
+        '--ignore-certificate-errors-spki-list',
+        '--ignore-urlfetcher-cert-requests',
+        '--managed-user-id=""',
+        '--nacl-dangerous-no-sandbox-nonsfi',
+        '--no-sandbox-and-elevated',
+        '--run-without-sandbox-for-testing',
+        '--single-process',
+        '--unlimited-storage',
+        '--unsafely-allow-protected-media-identifier-for-domain',
+        '--unsafely-treat-insecure-origin-as-secure',
+        '--webview-disable-safebrowsing-support',
+        '--v=1',
+        options.verbose ? '--enable-logging' : '',
+    ];
+    const setup = async () => {
+        browser = await puppeteer.launch({
+            executablePath: chromeIsInstalled ? CHROME_INSTALLED_PATH : undefined,
+            headless: !isExtension,
+            userDataDir: chromeDir,
+            ignoreHTTPSErrors: true,
+            args,
+        });
+        // browser.on('disconnected', setup);
+        console.log(`Started Puppeteer with pid ${browser.process().pid}`);
+    };
+    await setup();
 
     const chromeIndexedDbDir =
         chromeDir +
@@ -147,8 +174,18 @@ export default async function extract(
         '_' +
         port +
         '.indexeddb.leveldb';
+
+    const blob = source.replace(/\.indexeddb\.leveldb$/, '.indexeddb.blob');
+    const chromeBlobDir = chromeIndexedDbDir.replace(/\.indexeddb\.leveldb$/, '.indexeddb.blob');
+
     await copy(source, chromeIndexedDbDir);
-    console.log(`Copied IndexedDB to ${chromeIndexedDbDir}`);
+    console.log(`Copied IndexedDB from ${source} to ${chromeIndexedDbDir}`);
+
+    // Copy more blob folder
+    if (source !== blob && existsSync(blob)) {
+        await copy(blob, chromeBlobDir);
+        console.log(`Copied IndexedDB More from ${blob} to ${chromeBlobDir}`);
+    }
 
     const lockfile = chromeIndexedDbDir + '/LOCK';
     if (existsSync(lockfile)) {
@@ -187,7 +224,7 @@ export default async function extract(
     await page.setOfflineMode(false);
     await page.setRequestInterception(true);
 
-    page.on('request', (request) => {
+    page.on('request', (request: any) => {
         request.respond({
             status: 200,
             contentType: 'text/html',
@@ -211,10 +248,17 @@ export default async function extract(
     } else {
         throw new Error(`URL not figured out for ${source}`);
     }
+    // console.log(`URL2Open: ${urlToOpen}`);
     await page.goto(urlToOpen);
 
     const includeStores = typeof options.includeStores === 'boolean' ? options.includeStores : true;
-    const databases = (await page.evaluate(jsToEvaluateOnPage, {includeStores})) as Database[];
+    const db = options.db || false;
+    const store = options.store || false;
+    const databases = (await page.evaluate(jsToEvaluateOnPage, {
+        store,
+        db,
+        includeStores,
+    })) as Database[];
     const databasesCount = databases.length;
 
     let storesCount;

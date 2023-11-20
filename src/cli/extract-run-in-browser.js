@@ -2,6 +2,10 @@ const jsToEvaluateOnPage = async (options) => {
     /* global window */
 
     const callbackForEachStore = async (db, connection, storeName) => {
+        if (options.store && storeName != options.store) {
+            console.log(`Ignoring to read database "${db.name}" store "${storeName}"`);
+            return false;
+        }
         return new Promise(function (resolveStore, rejectStore) {
             const transaction = connection.result.transaction(storeName, 'readonly');
             console.log(`Starting to read database "${db.name}" store "${storeName}"`);
@@ -71,12 +75,18 @@ const jsToEvaluateOnPage = async (options) => {
         });
     };
 
-    const databases = await window.indexedDB.databases();
+    let databases = await window.indexedDB.databases();
+    if (options.db) {
+        databases = databases.filter(({name}) => name.indexOf(options.db) !== -1);
+    }
     console.log(`Found ${databases.length} databases`);
 
     if (options.includeStores) {
-        const dbPromises = databases.map(callbackForEachDb);
-        return Promise.all(dbPromises);
+        const results = [];
+        for (const db of databases) {
+            results.push(await callbackForEachDb(db));
+        }
+        return results.filter((t) => t);
     } else {
         return databases.map((database) => ({databaseName: database}));
     }
