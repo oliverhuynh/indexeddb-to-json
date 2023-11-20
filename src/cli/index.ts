@@ -1,3 +1,7 @@
+#!/usr/bin/env node
+
+// In dev, should run node -r ts-node/register src/cli/index.ts
+
 process.on('uncaughtException', function (e) {
     console.error(e);
     process.exit(1);

@@ -4,7 +4,7 @@
     "baseUrl": "./",
     "types": ["node"],
     "module": "commonjs",                    
-    "target": "es5",                          
+    "target": "ESNEXT",
     "declaration": true,
     "outDir": "./dist",  
     "lib": ["es6"],                     
