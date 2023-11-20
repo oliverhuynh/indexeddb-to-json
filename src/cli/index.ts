@@ -1,5 +1,3 @@
-#!/usr/bin/env node -r ts-node/register
-
 process.on('uncaughtException', function (e) {
     console.error(e);
     process.exit(1);
