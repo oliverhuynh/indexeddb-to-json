@@ -31,6 +31,8 @@ program
     .option('--verbose', 'Verbose logging')
     .option('-d, --db <value>', 'Filter results to DB')
     .option('-s, --store <value>', 'Filter results to store')
+    .option('-k, --key <value>', 'Filter results to key. keyvalue is required with this')
+    .option('--keyvalue <value>', 'Key value use together with --key')
     .action(async (source, options) => {
         await extract(source, options);
     });
