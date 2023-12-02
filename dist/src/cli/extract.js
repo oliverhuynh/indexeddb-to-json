@@ -134,7 +134,7 @@ async function extract(source, options) {
     const setup = async () => {
         browser = await puppeteer_1.default.launch({
             executablePath: chromeIsInstalled ? CHROME_INSTALLED_PATH : undefined,
-            headless: !isExtension,
+            headless: !process.env.DEBUG_INDEXEDDB && !isExtension,
             userDataDir: chromeDir,
             ignoreHTTPSErrors: true,
             args,
@@ -214,17 +214,22 @@ async function extract(source, options) {
     else {
         throw new Error(`URL not figured out for ${source}`);
     }
-    // console.log(`URL2Open: ${urlToOpen}`);
+    console.log(`URL2Open: ${urlToOpen}`);
     await page.goto(urlToOpen);
     const includeStores = typeof options.includeStores === 'boolean' ? options.includeStores : true;
     const db = options.db || false;
     const store = options.store || false;
+    const key = options.key || false;
+    const keyvalue = options.keyvalue || false;
     const databases = (await page.evaluate(extract_run_in_browser_1.jsToEvaluateOnPage, {
         store,
         db,
         includeStores,
+        key,
+        keyvalue
     }));
     const databasesCount = databases.length;
+    console.log(`Found DB: ${databasesCount}`);
     let storesCount;
     if (includeStores) {
         storesCount = databases.reduce((prev, current) => {
@@ -239,6 +244,7 @@ async function extract(source, options) {
         console.error(`In chrome_debug.log:\n${chromeDebugLog}`);
     }
     await browser.close();
+    console.log(`Closing browser at ${chromeDir}`);
     await fs_2.promises.rmdir(chromeDir, {
         recursive: true,
         maxRetries: 5,

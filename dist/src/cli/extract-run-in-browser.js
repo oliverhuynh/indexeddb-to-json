@@ -2,10 +2,10 @@ const jsToEvaluateOnPage = async (options) => {
     /* global window */
     const callbackForEachStore = async (db, connection, storeName) => {
         if (options.store && storeName != options.store) {
-            console.log(`Ignoring to read database "${db.name}" store "${storeName}"`);
+            console.log(`Ignoring to read database "${db.name}" store "${storeName}" because user need to export ${options.store}`);
             return false;
         }
-        return new Promise(function (resolveStore, rejectStore) {
+        const ret = await new Promise((resolveStore, rejectStore) => {
             const transaction = connection.result.transaction(storeName, 'readonly');
             console.log(`Starting to read database "${db.name}" store "${storeName}"`);
             transaction.onerror = (err) => {
@@ -27,39 +27,52 @@ const jsToEvaluateOnPage = async (options) => {
             };
             transaction.objectStore(storeName).openCursor().onsuccess = onTransactionCursor;
         });
+        if (options.key) {
+            return ret.filter(item => item[options.key].indexOf(options.keyvalue) !== -1);
+        }
+        return ret;
     };
     const callbackForEachDb = async (db) => {
-        console.log(`Database "${db.name}" version ${db.version}`);
-        return new Promise(function (resolveDb, rejectDb) {
-            const rejectFromError = (reason, error) => rejectDb(new Error(`${reason}: ${error}`));
-            const connection = window.indexedDB.open(db.name);
-            connection.onsuccess = async () => {
-                const objectStoreNames = Array.from(connection.result.objectStoreNames);
-                const dbExportObject = {
-                    databaseName: db.name,
-                    stores: [],
+        console.log(`Database "${db.name}", current version: ${db.version}`);
+        let connection;
+        let indexeddb;
+        let objectStoreNames = [];
+        try {
+            connection = window.indexedDB.open(db.name);
+            indexeddb = await new Promise((resolve, reject) => {
+                connection.onsuccess = async () => {
+                    resolve(connection.result);
                 };
-                console.log(`Database "${db.name}" version ${db.version} has object stores:`, objectStoreNames);
-                const resolveStorePromises = objectStoreNames.map(async (storeName) => {
-                    const values = await callbackForEachStore(db, connection, storeName);
-                    dbExportObject.stores.push({
-                        storeName: storeName,
-                        values: values,
-                    });
+                connection.onerror = (e) => reject('Connection failed', e);
+                connection.onupgradeneeded = (e) => reject('Upgrade needed', e);
+                connection.onblocked = (e) => reject('Blocked', e);
+            });
+            const objectStoreNameRaw = Array.from(indexeddb.objectStoreNames).map(i => i.toString());
+            objectStoreNames = [...objectStoreNameRaw].join(',').split(',');
+        }
+        catch (e) {
+            throw new Error(`DB error connection ${e}`);
+        }
+        const dbExportObject = {
+            databaseName: db.name,
+            stores: [],
+        };
+        console.log(`Database "${db.name}" version ${db.version} has object stores:`, objectStoreNames.length);
+        for (const storeName of objectStoreNames) {
+            // console.log(`Looping through ${storeName}`);
+            try {
+                const values = await callbackForEachStore(db, connection, storeName);
+                dbExportObject.stores.push({
+                    storeName: storeName,
+                    values: values,
                 });
-                try {
-                    await Promise.all(resolveStorePromises);
-                }
-                catch (e) {
-                    rejectFromError('Error resolving object store', e);
-                    return;
-                }
-                resolveDb(dbExportObject);
-            };
-            connection.onerror = (e) => rejectFromError('Connection failed', e);
-            connection.onupgradeneeded = (e) => rejectFromError('Upgrade needed', e);
-            connection.onblocked = (e) => rejectFromError('Blocked', e);
-        });
+            }
+            catch (e) {
+                console.error('Error resolving object store', e, e);
+            }
+        }
+        dbExportObject.stores = dbExportObject.stores.filter(({ values }) => values);
+        return dbExportObject;
     };
     let databases = await window.indexedDB.databases();
     if (options.db) {
@@ -69,9 +82,15 @@ const jsToEvaluateOnPage = async (options) => {
     if (options.includeStores) {
         const results = [];
         for (const db of databases) {
-            results.push(await callbackForEachDb(db));
+            try {
+                results.push(await callbackForEachDb(db));
+                console.log(`Finished exporting DB ${db.name}`);
+            }
+            catch (e) {
+                console.error(`Error load db: ${db.name}`, { e });
+            }
         }
-        return results.filter((t) => t);
+        return results.filter((t) => t && t.stores.length);
     }
     else {
         return databases.map((database) => ({ databaseName: database }));
