@@ -31,6 +31,7 @@ program
     .option('-s, --store <value>', 'Filter results to store')
     .option('-k, --key <value>', 'Filter results to key. keyvalue is required with this')
     .option('--keyvalue <value>', 'Key value use together with --key')
+    .option('-c, --cookie <value>', 'Read cookies of domain instead of indexed DB')
     .action(async (source, options) => {
     await extract_1.default(source, options);
 });
