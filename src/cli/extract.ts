@@ -7,8 +7,10 @@ import copy from 'recursive-copy';
 import {timestampForFilename} from './utils';
 import {jsToEvaluateOnPage} from './extract-run-in-browser';
 import {Database} from '../types';
+import debug from 'debug';
 
 interface CommandOptions {
+    cookie?: boolean;
     verbose?: boolean;
     stdout?: boolean;
     return?: boolean;
@@ -29,7 +31,131 @@ const CHROME_INSTALLED_PATH = '/opt/google/chrome/google-chrome';
 // better than Chromium. Chrome is also required to extract from extensions.
 const chromeIsInstalled = existsSync(CHROME_INSTALLED_PATH);
 
-export default async function extract(
+const chrome:any = {
+  browser: false,
+  options: {},
+  chromeDir: "",
+  close: async() => {
+    const chromeDir = chrome.chromeDir;
+
+    if (existsSync(chromeDir + '/chrome_debug.log')) {
+        const chromeDebugLog = await fsPromises.readFile(chromeDir + '/chrome_debug.log', 'utf8');
+        console.error(`In chrome_debug.log:\n${chromeDebugLog}`);
+    }
+
+    await chrome.browser.close();
+    debug(`Closing browser at ${chromeDir}`);
+    await fsPromises.rm(chromeDir, {
+        recursive: true,
+        maxRetries: 5,
+        retryDelay: 1000,
+    });
+    debug(`Deleted temporary Chrome directory: ${chromeDir}`);
+  },
+  setup: async(options) => {
+    chrome.options = options;
+    const chromeDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'puppeteer-extract-'));
+    chrome.chromeDir = chromeDir;
+    debug('Temporary Chrome directory:', chromeDir);
+    const args = [
+        // See https://peter.sh/experiments/chromium-command-line-switches/
+        // Yeah, this code is for real.
+        '--allow-failed-policy-fetch-for-test',
+        '--allow-insecure-localhost',
+        '--allow-no-sandbox-job',
+        '--allow-running-insecure-content',
+        '--arc-disable-app-sync',
+        '--arc-disable-locale-sync',
+        '--disable-client-side-phishing-detection',
+        '--disable-component-cloud-policy',
+        '--disable-cookie-encryption',
+        '--disable-default-apps',
+        '--disable-explicit-dma-fences',
+        '--disable-extensions-file-access-check',
+    ];
+    const args2 = [
+        // See https://peter.sh/experiments/chromium-command-line-switches/
+        // Yeah, this code is for real.
+        '--allow-failed-policy-fetch-for-test',
+        '--allow-insecure-localhost',
+        '--allow-no-sandbox-job',
+        '--allow-running-insecure-content',
+        '--arc-disable-app-sync',
+        '--arc-disable-locale-sync',
+        '--disable-client-side-phishing-detection',
+        '--disable-component-cloud-policy',
+        '--disable-cookie-encryption',
+        '--disable-default-apps',
+        '--disable-explicit-dma-fences',
+        '--disable-extensions-file-access-check',
+        // @TODO: Fix for Extension isExtension ? `--disable-extensions-except=${pathToExtension}` : '--disable-extensions',
+        // isExtension ? `--load-extension=${pathToExtension}` : '',
+        '--disable-machine-cert-request',
+        '--disable-site-isolation-trials',
+        '--disable-sync',
+        '--disable-web-security',
+        '--enable-sandbox-logging',
+        '--ignore-certificate-errors-spki-list',
+        '--ignore-urlfetcher-cert-requests',
+        '--managed-user-id=""',
+        '--nacl-dangerous-no-sandbox-nonsfi',
+        '--no-sandbox-and-elevated',
+        '--run-without-sandbox-for-testing',
+        '--single-process',
+        '--unlimited-storage',
+        '--unsafely-allow-protected-media-identifier-for-domain',
+        '--unsafely-treat-insecure-origin-as-secure',
+        '--webview-disable-safebrowsing-support',
+        '--v=1',
+        options.verbose ? '--enable-logging' : '',
+    ];
+
+    const browser = await puppeteer.launch({...{
+        executablePath: chromeIsInstalled ? CHROME_INSTALLED_PATH : undefined,
+        // headless: !process.env.DEBUG_INDEXEDDB && !isExtension,
+        headless: !process.env.DEBUG_INDEXEDDB,
+        userDataDir: chrome.chromeDir,
+        ignoreHTTPSErrors: true,
+        args,
+    }, ...(options.chrome || {})});
+    // browser.on('disconnected', setup);
+    debug(`Started Puppeteer with pid ${browser.process().pid}`);
+    chrome.browser = browser;
+    return chromeDir;
+  },
+  page: false,
+  start: async(urlToOpen, jsToEvaluateOnPage = "", jsoptions = {}) => {
+    const options = chrome.options;
+    const browser = chrome.browser;
+    const page = await browser.newPage();
+    chrome.page = page;
+
+    await page.setCacheEnabled(false);
+    await page.setOfflineMode(false);
+    await page.setRequestInterception(true);
+    page.on('request', (request: any) => {
+        request.respond({
+            status: 200,
+            contentType: 'text/html',
+            body: 'Fake page',
+        });
+    });
+    if (options.verbose) {
+        page.on('console', (msg: ConsoleMessage) => {
+            debug(`Console from inside Chrome: ${msg.text()}`);
+        });
+    }
+    debug(`URL2Open: ${urlToOpen}`);
+    await page.goto(urlToOpen);
+
+    if (jsToEvaluateOnPage) {
+      return await page.evaluate(jsToEvaluateOnPage, jsoptions);
+    }
+    return [];
+  }
+}
+
+export async function extract_indexed(
     source: string,
     options: CommandOptions,
 ): Promise<void | Database[]> {
@@ -89,85 +215,19 @@ export default async function extract(
         throw new Error(`Port not figured out for ${source}`);
     }
 
-    const chromeDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'puppeteer-extract-'));
+    const chromeDir = await chrome.setup(options);
 
-    console.log('Extracting from:', source);
-    console.log('Host:', host);
-    console.log('Temporary Chrome directory:', chromeDir);
+    debug('Extracting from:', source);
+    debug('Host:', host);
 
     if (isExtension) {
         const chromeExtensionDir = chromeDir + '/Default/Extensions/extract';
         await copy(pathToExtension as string, chromeExtensionDir);
-        console.log(`Copied extension from ${pathToExtension} to ${chromeExtensionDir}`);
+        debug(`Copied extension from ${pathToExtension} to ${chromeExtensionDir}`);
         pathToExtension = chromeExtensionDir;
     }
 
-    console.log(`executablePath: ${CHROME_INSTALLED_PATH}`);
-    let browser: any;
-    const args = [
-        // See https://peter.sh/experiments/chromium-command-line-switches/
-        // Yeah, this code is for real.
-        '--allow-failed-policy-fetch-for-test',
-        '--allow-insecure-localhost',
-        '--allow-no-sandbox-job',
-        '--allow-running-insecure-content',
-        '--arc-disable-app-sync',
-        '--arc-disable-locale-sync',
-        '--disable-client-side-phishing-detection',
-        '--disable-component-cloud-policy',
-        '--disable-cookie-encryption',
-        '--disable-default-apps',
-        '--disable-explicit-dma-fences',
-        '--disable-extensions-file-access-check',
-    ];
-    const args2 = [
-        // See https://peter.sh/experiments/chromium-command-line-switches/
-        // Yeah, this code is for real.
-        '--allow-failed-policy-fetch-for-test',
-        '--allow-insecure-localhost',
-        '--allow-no-sandbox-job',
-        '--allow-running-insecure-content',
-        '--arc-disable-app-sync',
-        '--arc-disable-locale-sync',
-        '--disable-client-side-phishing-detection',
-        '--disable-component-cloud-policy',
-        '--disable-cookie-encryption',
-        '--disable-default-apps',
-        '--disable-explicit-dma-fences',
-        '--disable-extensions-file-access-check',
-        isExtension ? `--disable-extensions-except=${pathToExtension}` : '--disable-extensions',
-        isExtension ? `--load-extension=${pathToExtension}` : '',
-        '--disable-machine-cert-request',
-        '--disable-site-isolation-trials',
-        '--disable-sync',
-        '--disable-web-security',
-        '--enable-sandbox-logging',
-        '--ignore-certificate-errors-spki-list',
-        '--ignore-urlfetcher-cert-requests',
-        '--managed-user-id=""',
-        '--nacl-dangerous-no-sandbox-nonsfi',
-        '--no-sandbox-and-elevated',
-        '--run-without-sandbox-for-testing',
-        '--single-process',
-        '--unlimited-storage',
-        '--unsafely-allow-protected-media-identifier-for-domain',
-        '--unsafely-treat-insecure-origin-as-secure',
-        '--webview-disable-safebrowsing-support',
-        '--v=1',
-        options.verbose ? '--enable-logging' : '',
-    ];
-    const setup = async () => {
-        browser = await puppeteer.launch({
-            executablePath: chromeIsInstalled ? CHROME_INSTALLED_PATH : undefined,
-            headless: !process.env.DEBUG_INDEXEDDB && !isExtension,
-            userDataDir: chromeDir,
-            ignoreHTTPSErrors: true,
-            args,
-        });
-        // browser.on('disconnected', setup);
-        console.log(`Started Puppeteer with pid ${browser.process().pid}`);
-    };
-    await setup();
+    debug(`executablePath: ${CHROME_INSTALLED_PATH}`);
 
     const chromeIndexedDbDir =
         chromeDir +
@@ -181,18 +241,18 @@ export default async function extract(
     const chromeBlobDir = chromeIndexedDbDir.replace(/\.indexeddb\.leveldb$/, '.indexeddb.blob');
 
     await copy(source, chromeIndexedDbDir);
-    console.log(`Copied IndexedDB from ${source} to ${chromeIndexedDbDir}`);
+    debug(`Copied IndexedDB from ${source} to ${chromeIndexedDbDir}`);
 
     // Copy more blob folder
     if (source !== blob && existsSync(blob)) {
         await copy(blob, chromeBlobDir);
-        console.log(`Copied IndexedDB More from ${blob} to ${chromeBlobDir}`);
+        debug(`Copied IndexedDB More from ${blob} to ${chromeBlobDir}`);
     }
 
     const lockfile = chromeIndexedDbDir + '/LOCK';
     if (existsSync(lockfile)) {
         await fsPromises.unlink(lockfile);
-        console.log(`Deleted lockfile ${lockfile}`);
+        debug(`Deleted lockfile ${lockfile}`);
     }
 
     const sourceDatabasesDir = source
@@ -203,7 +263,7 @@ export default async function extract(
             .replace('IndexedDB', 'databases')
             .replace('.indexeddb.leveldb', '');
         await copy(sourceDatabasesDir, chromeDatabasesDir);
-        console.log("Copied host's IndexedDB folder to " + chromeDatabasesDir);
+        debug("Copied host's IndexedDB folder to " + chromeDatabasesDir);
 
         const sourceDatabasesDotDb = sourceDatabasesDir.replace(/\/http.+/, '/Databases.db');
         const sourceDatabasesDotDbJournal = sourceDatabasesDotDb + '-journal';
@@ -212,32 +272,12 @@ export default async function extract(
 
         if (existsSync(sourceDatabasesDotDb)) {
             await copy(sourceDatabasesDotDb, chromeDatabasesDotDb);
-            console.log(`Copied Databases.db to ${chromeDatabasesDotDb}`);
+            debug(`Copied Databases.db to ${chromeDatabasesDotDb}`);
         }
         if (existsSync(sourceDatabasesDotDbJournal)) {
             await copy(sourceDatabasesDotDbJournal, chromeDatabasesDotDbJournal);
-            console.log(`Copied Databases.db-journal to ${chromeDatabasesDotDbJournal}`);
+            debug(`Copied Databases.db-journal to ${chromeDatabasesDotDbJournal}`);
         }
-    }
-
-    const page = await browser.newPage();
-
-    await page.setCacheEnabled(false);
-    await page.setOfflineMode(false);
-    await page.setRequestInterception(true);
-
-    page.on('request', (request: any) => {
-        request.respond({
-            status: 200,
-            contentType: 'text/html',
-            body: 'Fake page',
-        });
-    });
-
-    if (options.verbose) {
-        page.on('console', (msg: ConsoleMessage) => {
-            console.log(`Console from inside Chrome: ${msg.text()}`);
-        });
     }
 
     let urlToOpen;
@@ -250,15 +290,13 @@ export default async function extract(
     } else {
         throw new Error(`URL not figured out for ${source}`);
     }
-    console.log(`URL2Open: ${urlToOpen}`);
-    await page.goto(urlToOpen);
 
     const includeStores = typeof options.includeStores === 'boolean' ? options.includeStores : true;
     const db = options.db || false;
     const store = options.store || false;
     const key = options.key || false;
     const keyvalue = options.keyvalue || false;
-    const databases = (await page.evaluate(jsToEvaluateOnPage, {
+    const databases = (await chrome.start(urlToOpen, jsToEvaluateOnPage, {
         store,
         db,
         includeStores,
@@ -266,7 +304,7 @@ export default async function extract(
         keyvalue
     })) as Database[];
     const databasesCount = databases.length;
-    console.log(`Found DB: ${databasesCount}`);
+    debug(`Found DB: ${databasesCount}`);
 
     let storesCount;
     if (includeStores) {
@@ -277,22 +315,9 @@ export default async function extract(
         storesCount = undefined;
     }
 
-    if (existsSync(chromeDir + '/chrome_debug.log')) {
-        const chromeDebugLog = await fsPromises.readFile(chromeDir + '/chrome_debug.log', 'utf8');
-        console.error(`In chrome_debug.log:\n${chromeDebugLog}`);
-    }
+    await chrome.close();
 
-    await browser.close();
-
-    console.log(`Closing browser at ${chromeDir}`);
-    await fsPromises.rmdir(chromeDir, {
-        recursive: true,
-        maxRetries: 5,
-        retryDelay: 1000,
-    });
-    console.log(`Deleted temporary Chrome directory: ${chromeDir}`);
-
-    console.log(`Extracted ${databasesCount} database(s) containing ${storesCount} store(s)`);
+    debug(`Extracted ${databasesCount} database(s) containing ${storesCount} store(s)`);
 
     if (options.return) {
         return databases;
@@ -312,3 +337,49 @@ export default async function extract(
         console.log(`Wrote JSON to ${outputFile}`);
     }
 }
+
+export async function extract_cookie(
+    source: string,
+    options: CommandOptions,
+): Promise<void | Database[]> {
+    if (!existsSync(source)) {
+        throw new Error(`Source directory does not exist: ${source}`);
+    }
+
+    const chromeDir = await chrome.setup(options);
+
+    const cookieDir = chromeDir + '/Default/Cookies';
+    await copy(source, cookieDir);
+    debug(`Copied IndexedDB from ${source} to ${cookieDir}`);
+    await chrome.start(options.cookie, "");
+    const cookies = await chrome.page.cookies();
+    await chrome.close();
+
+    const header = '# Netscape HTTP Cookie File';
+    const formattedCookies = [...[header], ...cookies.map(cookie => {
+        return [
+            cookie.domain, // domain
+            cookie.domain.startsWith('.') ? 'TRUE' : 'FALSE', // include subdomains
+            cookie.path, // path
+            cookie.secure ? 'TRUE' : 'FALSE', // secure
+            cookie.expires ? cookie.expires : '0', // expiration time (0 if session cookie)
+            cookie.name, // name
+            cookie.value // value
+        ].join('\t');
+    })].join('\n');
+
+    // Output to stdout
+    console.log(`${formattedCookies}`);
+    return [];
+}
+
+export default async function extract(
+    source: string,
+    options: CommandOptions,
+): Promise<void | Database[]> {
+  if (!options?.cookie) {
+    return await extract_indexed(source, options);
+  }
+  return await extract_cookie(source, options);
+}
+
